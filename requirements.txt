@@ -3,7 +3,7 @@ Flask
 numpy
 scipy
 matplotlib
-sympy==
+sympy
 Werkzeug
 Jinja2
 MarkupSafe
