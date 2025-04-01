@@ -1,0 +1,226 @@
+{% extends 'base.html' %}
+{% block content %}
+   <!-- Before closing body tag -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+
+<div class="header">
+    <div class="container">
+        <h1 class="display-4">ODE Solver Documentation</h1>
+        <p class="lead">Comprehensive guide for solving Ordinary Differential Equations (ODEs) using numerical methods</p>
+    </div>
+</div>
+
+<div class="container">
+    <div class="row">
+        <div class="col-md-3">
+            <nav id="navbar-docs" class="navbar navbar-light flex-column align-items-stretch p-3 sticky-top">
+                <nav class="nav nav-pills flex-column">
+                    <a class="nav-link" href="#introduction">Introduction</a>
+                    <a class="nav-link" href="#input-format">Input Format</a>
+                    <a class="nav-link" href="#finite-difference">Finite Difference Method</a>
+                    <a class="nav-link" href="#shooting-method">Shooting Method</a>
+                    <a class="nav-link" href="#examples">Example Problems</a>
+                    <a class="nav-link" href="#limitations">Limitations</a>
+                </nav>
+            </nav>
+        </div>
+        
+        <div class="col-md-9">
+            <div data-bs-spy="scroll" data-bs-target="#navbar-docs" data-bs-offset="0" class="scrollspy-docs">
+                <section id="introduction" class="content-section">
+                    <h2>Introduction</h2>
+                    <p>This web application provides numerical solutions to boundary value problems (BVPs) for ordinary differential equations (ODEs) using two different methods:</p>
+                    <ol>
+                        <li>Finite Difference Method</li>
+                        <li>Shooting Method</li>
+                    </ol>
+                    
+                    <p>The application can handle second-order ODEs of the general form:</p>
+                    <div class="math-formula">
+                        \[ y'' = f(x, y, y') \]
+                    </div>
+                    
+                    <p>with boundary conditions specified at both ends of the interval \([x_{\text{start}}, x_{\text{end}}]\).</p>
+                </section>
+                
+                <section id="input-format" class="content-section">
+                    <h2>Input Format</h2>
+                    <p>The ODE should be entered in the input field either in the form:</p>
+                    <div class="math-formula">
+                        \[ y'' = \text{expression} \]
+                    </div>
+                    <p>or simply as the right-hand side expression (the application will automatically add "y'' = " if not present).</p>
+                    
+                    <h3>Supported Mathematical Operations</h3>
+                    <ul>
+                        <li>Basic arithmetic: +, -, *, /, ^ (exponentiation)</li>
+                        <li>Elementary functions: sin, cos, tan, exp, log, sqrt, etc.</li>
+                        <li>Constants: pi, e</li>
+                    </ul>
+                    
+                    <h3>Variable Names</h3>
+                    <ul>
+                        <li>Independent variable: \(x\)</li>
+                        <li>Dependent variable: \(y\) (use \(y'\) for first derivative, \(y''\) for second derivative)</li>
+                    </ul>
+                    
+                    <div class="example-box">
+                        <h4>Example Inputs:</h4>
+                        <ul>
+                            <li><code>y'' = -y</code> (Simple harmonic oscillator)</li>
+                            <li><code>y'' = -0.1*y' - sin(y)</code> (Damped pendulum)</li>
+                            <li><code>2*x*y' - y + x^2</code> (Will be interpreted as \(y'' = 2xy' - y + x^2\))</li>
+                        </ul>
+                    </div>
+                </section>
+                
+                <section id="finite-difference" class="content-section">
+                    <h2>Finite Difference Method</h2>
+                    <p>The finite difference method approximates derivatives using finite differences and solves the resulting system of algebraic equations.</p>
+                    
+                    <h3>Method Overview</h3>
+                    <p>For a second-order ODE:</p>
+                    <div class="math-formula">
+                        \[ y''(x) = f(x, y, y') \]
+                    </div>
+                    
+                    <p>The derivatives are approximated as:</p>
+                    <div class="math-formula">
+                        \[ y''(x_i) \approx \frac{y_{i+1} - 2y_i + y_{i-1}}{h^2} \]
+                        \[ y'(x_i) \approx \frac{y_{i+1} - y_{i-1}}{2h} \]
+                    </div>
+                    
+                    <p>where \(h\) is the step size and \(y_i = y(x_i)\).</p>
+                    
+                    <h3>Implementation</h3>
+                    <p>The method:</p>
+                    <ol>
+                        <li>Discretizes the interval \([a, b]\) into \(N\) points</li>
+                        <li>Replaces derivatives with finite difference approximations</li>
+                        <li>Solves the resulting system of equations (using iteration for nonlinear problems)</li>
+                    </ol>
+                    
+                    <h3>Parameters</h3>
+                    <ul>
+                        <li><strong>Number of points</strong>: Determines the resolution of the solution (more points = more accurate but slower)</li>
+                    </ul>
+                    
+                    <h3>When to Use</h3>
+                    <p>This method works well for linear problems and mildly nonlinear problems. It's generally more stable than the shooting method but may require more points for accurate solutions.</p>
+                </section>
+                
+                <section id="shooting-method" class="content-section">
+                    <h2>Shooting Method</h2>
+                    <p>The shooting method converts the boundary value problem into an initial value problem and uses root-finding to satisfy the boundary conditions.</p>
+                    
+                    <h3>Method Overview</h3>
+                    <p>For a problem with boundary conditions:</p>
+                    <div class="math-formula">
+                        \[ y(a) = \alpha, \quad y(b) = \beta \]
+                    </div>
+                    
+                    <p>The method:</p>
+                    <ol>
+                        <li>Guesses the initial slope \(y'(a) = s\)</li>
+                        <li>Solves the initial value problem from \(x = a\) to \(x = b\)</li>
+                        <li>Compares the solution at \(x = b\) with the desired value \(\beta\)</li>
+                        <li>Adjusts \(s\) using a root-finding algorithm (bisection in this implementation)</li>
+                    </ol>
+                    
+                    <h3>Implementation</h3>
+                    <p>This application uses:</p>
+                    <ul>
+                        <li>RK45 method for solving the initial value problem</li>
+                        <li>Bisection method for root-finding</li>
+                    </ul>
+                    
+                    <h3>Parameters</h3>
+                    <ul>
+                        <li><strong>Tolerance</strong>: The desired accuracy for meeting the boundary condition</li>
+                        <li><strong>Maximum iterations</strong>: Limits the number of attempts to find the correct initial slope</li>
+                    </ul>
+                    
+                    <h3>When to Use</h3>
+                    <p>This method is particularly useful for nonlinear problems where the finite difference method might struggle. It can be more efficient for problems where good initial guesses are available.</p>
+                </section>
+                
+                <section id="examples" class="content-section">
+                    <h2>Example Problems</h2>
+                    
+                    <div class="example-box">
+                        <h4>1. Simple Harmonic Oscillator</h4>
+                        <p>Equation:</p>
+                        <div class="math-formula">
+                            \[ y'' + y = 0 \]
+                        </div>
+                        <p>Boundary conditions:</p>
+                        <div class="math-formula">
+                            \[ y(0) = 0, \quad y(\pi) = 0 \]
+                        </div>
+                        <p>Exact solution: \(y(x) = A\sin(x)\)</p>
+                    </div>
+                    
+                    <div class="example-box">
+                        <h4>2. Heat Conduction in a Rod</h4>
+                        <p>Equation:</p>
+                        <div class="math-formula">
+                            \[ y'' = -10 \]
+                        </div>
+                        <p>Boundary conditions:</p>
+                        <div class="math-formula">
+                            \[ y(0) = 0, \quad y(1) = 0 \]
+                        </div>
+                        <p>Exact solution: \(y(x) = -5x^2 + 5x\)</p>
+                    </div>
+                    
+                    <div class="example-box">
+                        <h4>3. Nonlinear Pendulum</h4>
+                        <p>Equation:</p>
+                        <div class="math-formula">
+                            \[ y'' = -\sin(y) \]
+                        </div>
+                        <p>Boundary conditions:</p>
+                        <div class="math-formula">
+                            \[ y(0) = 0, \quad y(10) = 2\pi \]
+                        </div>
+                        <p>This nonlinear problem demonstrates the advantage of the shooting method.</p>
+                    </div>
+                </section>
+                
+                <section id="limitations" class="content-section">
+                    <h2>Limitations</h2>
+                    <ul>
+                        <li>Currently supports only second-order ODEs</li>
+                        <li>Boundary conditions must be specified at both endpoints</li>
+                        <li>For the shooting method, the solution might not converge if:
+                            <ul>
+                                <li>The initial guess is too far from the true solution</li>
+                                <li>The problem is particularly stiff</li>
+                                <li>The interval is too large</li>
+                            </ul>
+                        </li>
+                        <li>Finite difference method may struggle with:
+                            <ul>
+                                <li>Highly nonlinear problems</li>
+                                <li>Problems with boundary layers or rapid changes</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </section>
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    // Enable scrollspy
+    const scrollSpy = new bootstrap.ScrollSpy(document.body, {
+        target: '#navbar-docs'
+    });
+</script> 
+{% endblock %}
+
+
