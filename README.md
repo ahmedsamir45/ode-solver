@@ -18,7 +18,7 @@ A web application for solving Ordinary Differential Equations (ODEs) using numer
 
 ## Live Demo
 
-[Try it online!](https://ahmedsamir45-ode-solver.herokuapp.com)
+[Try it online!](https://fat-tracey-ahmedsamir6788-2c22bae7.koyeb.app/)
 
 
 ## Installation
