@@ -1,16 +1,146 @@
-# app.py
 from flask import Flask, render_template, request, jsonify
 import numpy as np
-from scipy.integrate import solve_ivp
+import sympy as sp
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import io
 import base64
-from sympy import symbols, sympify, lambdify
-import re
+from scipy.integrate import solve_ivp
 
 app = Flask(__name__)
+
+def parse_equation(equation_str):
+    x, y, yp = sp.symbols('x y yp')  # yp for y'
+    # Replace y' and y'' correctly
+    equation_str = equation_str.replace("y''", 'd2y')
+    equation_str = equation_str.replace("y'", 'yp')
+    equation_str = equation_str.replace("d2y", 'd2y')  # maintain replacement order
+
+    try:
+        equation = sp.sympify(equation_str)
+        return equation
+    except Exception:
+        return None
+
+def equation_to_function(equation_str):
+    """Convert equation string to a callable function"""
+    x, y, p = sp.symbols('x y p')
+    equation = parse_equation(equation_str)
+    
+    # Convert to lambda function that takes x, y, p
+    func = sp.lambdify((x, y, p), equation, 'numpy')
+    
+    def odefunc(x, Y):
+        y, p = Y
+        dydt = p
+        dpdt = func(x, y, p)
+        return [dydt, dpdt]
+    
+    return odefunc
+
+def finite_difference_method(equation_str, a, b, alpha, beta, bc_type, h):
+    x, y = sp.symbols('x y')
+    n = int((b - a) / h) + 1
+    x_vals = np.linspace(a, b, n)
+
+    # Assume equation is of the form y'' = f(x, y, y')
+    # We ignore y' in FD and treat f(x, y) only for simplicity
+    # Replace y'' = f(x, y), approximate y'' ≈ (y[i-1] - 2*y[i] + y[i+1]) / h²
+
+    equation = parse_equation(equation_str)
+    if equation is None:
+        return None, None
+
+    # Convert to a function f(x, y)
+    f_func = sp.lambdify((x, y), equation.subs('yp', 0), 'numpy')
+
+    A = np.zeros((n, n))
+    B = np.zeros(n)
+
+    for i in range(1, n - 1):
+        xi = x_vals[i]
+        A[i, i - 1] = 1
+        A[i, i] = -2
+        A[i, i + 1] = 1
+        B[i] = h ** 2 * f_func(xi, 0)  # we don't know y yet, initial approx y=0
+
+    if bc_type == "dirichlet":
+        A[0, 0] = 1
+        B[0] = alpha
+        A[-1, -1] = 1
+        B[-1] = beta
+    else:  # Neumann at right, Dirichlet at left
+        A[0, 0] = 1
+        B[0] = alpha
+        A[-1, -2] = -1
+        A[-1, -1] = 1
+        B[-1] = h * beta
+
+    try:
+        y_vals = np.linalg.solve(A, B)
+        return x_vals, y_vals
+    except Exception:
+        return None, None
+
+def shooting_method(equation_str, a, b, alpha, beta, bc_type, h):
+    x_sym, y_sym, yp_sym = sp.symbols('x y yp')
+    equation_str = equation_str.replace("y''", 'd2y')
+    equation_str = equation_str.replace("y'", 'yp')
+    equation_str = equation_str.replace("d2y", 'd2y')
+
+    try:
+        equation = sp.sympify(equation_str)
+    except Exception:
+        return None, None
+
+    # Build RHS of the second-order ODE as a system of two first-order ODEs
+    f_expr = equation.subs('yp', yp_sym)
+    f = sp.lambdify((x_sym, y_sym, yp_sym), f_expr, 'numpy')
+
+    def system(x, Y):
+        y1, y2 = Y  # y1 = y, y2 = y'
+        return [y2, f(x, y1, y2)]
+
+    def solve_for_guess(guess):
+        sol = solve_ivp(system, (a, b), [alpha, guess], t_eval=np.arange(a, b + h, h))
+        return sol.y[0, -1] - beta  # mismatch at x=b
+
+    from scipy.optimize import root_scalar
+
+    # Bracket the root for initial guesses
+    try:
+        sol = root_scalar(solve_for_guess, bracket=[-100, 100], method='bisect', xtol=1e-6)
+    except ValueError:
+        return None, None
+
+    if not sol.converged:
+        return None, None
+
+    # Final solution with best initial derivative
+    s = sol.root
+    final_sol = solve_ivp(system, (a, b), [alpha, s], t_eval=np.arange(a, b + h, h))
+
+    return final_sol.t, final_sol.y[0]
+
+def create_plot(x, y, method_name):
+    """Create a plot of the solution"""
+    plt.figure(figsize=(10, 6))
+    plt.plot(x, y, 'b-', linewidth=2)
+    plt.scatter(x, y, color='red', s=20)
+    plt.grid(True)
+    plt.xlabel('x')
+    plt.ylabel('y(x)')
+    plt.title(f'Solution using {method_name}')
+    
+    # Convert plot to PNG image
+    img = io.BytesIO()
+    plt.savefig(img, format='png', bbox_inches='tight')
+    img.seek(0)
+    plot_url = base64.b64encode(img.getvalue()).decode('utf8')
+    plt.close()
+    
+    return plot_url
 
 @app.route('/')
 def index():
@@ -19,257 +149,65 @@ def index():
 @app.route('/solve', methods=['POST'])
 def solve():
     try:
-        data = request.form
-        
         # Get form data
-        ode_str = data.get('ode')
-        order = int(data.get('order'))
-        x_start = float(data.get('x_start'))
-        x_end = float(data.get('x_end'))
-        method = data.get('method')
+        equation = request.form.get('equation')
+        a = float(request.form.get('a'))
+        b = float(request.form.get('b'))
+        alpha = float(request.form.get('alpha'))
+        beta = float(request.form.get('beta'))
+        bc_type = request.form.get('bc_type')
+        h = float(request.form.get('h'))
         
-        # Get boundary conditions
-        boundary_conditions = []
-        for i in range(order):
-            bc_type = data.get(f'bc{i}_type')
-            bc_point = float(data.get(f'bc{i}_point'))
-            bc_value = float(data.get(f'bc{i}_value'))
-            boundary_conditions.append({'type': bc_type, 'point': bc_point, 'value': bc_value})
+        # Solve using finite difference method
+        x_fd, y_fd = finite_difference_method(equation, a, b, alpha, beta, bc_type, h)
         
-        # Get method-specific parameters
-        if method == 'finite_difference':
-            n_points = int(data.get('n_points'))
-            solution, x_values = solve_finite_difference(ode_str, order, x_start, x_end, n_points, boundary_conditions)
-        else:  # shooting method
-            tol = float(data.get('tol'))
-            max_iter = int(data.get('max_iter'))
-            solution, x_values = solve_shooting(ode_str, order, x_start, x_end, boundary_conditions, tol, max_iter)
+        # Solve using shooting method
+        x_shooting, y_shooting = shooting_method(equation, a, b, alpha, beta, bc_type, h)
         
-        # Generate plot
-        plt.figure(figsize=(10, 6))
-        plt.plot(x_values, solution, 'b-')
-        plt.grid(True)
-        plt.xlabel('x')
-        plt.ylabel('y')
-        plt.title(f'Solution using {method.replace("_", " ").title()} Method')
+        results = {}
         
-        # Convert plot to base64 for displaying in browser
-        buffer = io.BytesIO()
-        plt.savefig(buffer, format='png')
-        buffer.seek(0)
-        plot_data = base64.b64encode(buffer.getvalue()).decode('utf-8')
-        plt.close()
+        if x_fd is not None and y_fd is not None:
+            # Create finite difference plot
+            plot_url_fd = create_plot(x_fd, y_fd, "Finite Difference Method")
+            
+            # Prepare table data
+            fd_table = []
+            for i, (xi, yi) in enumerate(zip(x_fd, y_fd)):
+                fd_table.append({'i': i, 'x': xi, 'y': yi})
+            
+            results['finite_difference'] = {
+                'plot': plot_url_fd,
+                'table': fd_table
+            }
         
-        return jsonify({
-            'status': 'success',
-            'plot': plot_data,
-            'x_values': x_values.tolist(),
-            'y_values': solution.tolist()
-        })
+        if x_shooting is not None and y_shooting is not None:
+            # Create shooting method plot
+            plot_url_shooting = create_plot(x_shooting, y_shooting, "Shooting Method")
+            
+            # Prepare table data
+            shooting_table = []
+            for i, (xi, yi) in enumerate(zip(x_shooting, y_shooting)):
+                shooting_table.append({'i': i, 'x': xi, 'y': yi})
+            
+            results['shooting'] = {
+                'plot': plot_url_shooting,
+                'table': shooting_table
+            }
+        
+        return jsonify({'success': True, 'results': results})
     
     except Exception as e:
-        return jsonify({'status': 'error', 'message': str(e)})
+        return jsonify({'success': False, 'error': str(e)})
+    
 
-def parse_ode(ode_str, order):
-    """Parse the ODE string into a function."""
-    # Replace y', y'', etc. with y[1], y[2], etc.
-    for i in range(order, 0, -1):
-        derivative = "y" + "'"*i
-        ode_str = ode_str.replace(derivative, f"y[{i}]")
-    
-    ode_str = ode_str.replace("y", "y[0]")
-    
-    # Create symbols
-    x, y0, y1, y2, y3, y4 = symbols('x y[0] y[1] y[2] y[3] y[4]')
-    
-    # Parse the expression
-    expr = sympify(ode_str)
-    
-    # Create a lambda function
-    func = lambdify((x, y0, y1, y2, y3, y4), expr)
-    
-    def ode_func(x, y_vector):
-        # For first-order system, y_vector contains [y, y', y'', ...] 
-        # We need to compute the highest derivative
-        
-        # Initialize array for derivatives
-        derivatives = np.zeros(order)
-        
-        # For a system of ODEs, derivatives[0] = y', derivatives[1] = y'', etc.
-        for i in range(order-1):
-            derivatives[i] = y_vector[i+1]
-        
-        # Compute the highest derivative using the parsed function
-        y_args = [y_vector[i] for i in range(min(5, order))]
-        while len(y_args) < 5:
-            y_args.append(0)  # Pad with zeros if order < 5
-            
-        derivatives[-1] = func(x, *y_args)
-        
-        return derivatives
-    
-    return ode_func
 
-def solve_finite_difference(ode_str, order, x_start, x_end, n_points, boundary_conditions):
-    """Solve ODE using finite difference method."""
-    if order != 2:
-        raise ValueError("Finite difference implementation currently supports only 2nd order ODEs")
-    
-    # Extract and process the differential equation: y'' = f(x, y, y')
-    def extract_rhs(ode_str):
-        # Find everything after the equals sign
-        match = re.search(r'=\s*(.*)', ode_str)
-        if match:
-            return match.group(1).strip()
-        return ode_str  # If no equals sign, assume the RHS directly
-    
-    rhs_str = extract_rhs(ode_str)
-    
-    # Set up the mesh
-    h = (x_end - x_start) / (n_points - 1)
-    x = np.linspace(x_start, x_end, n_points)
-    
-    # Initialize coefficient matrices for the system Ay = b
-    A = np.zeros((n_points, n_points))
-    b = np.zeros(n_points)
-    
-    # Parse the RHS of the ODE
-    x_sym, y_sym, yp_sym = symbols('x y y\'')
-    rhs_expr = sympify(rhs_str)
-    rhs_func = lambdify((x_sym, y_sym, yp_sym), rhs_expr)
-    
-    # Apply boundary conditions
-    left_bc = next((bc for bc in boundary_conditions if bc['point'] == x_start), None)
-    right_bc = next((bc for bc in boundary_conditions if bc['point'] == x_end), None)
-    
-    if not (left_bc and right_bc):
-        raise ValueError("Boundary conditions must be specified at both endpoints")
-    
-    # Set up boundary conditions
-    A[0, 0] = 1
-    b[0] = left_bc['value']
-    
-    A[-1, -1] = 1
-    b[-1] = right_bc['value']
-    
-    # Set up the finite difference equation for interior points
-    # Use the approximation: y''(x) ≈ (y(x+h) - 2y(x) + y(x-h))/h²
-    for i in range(1, n_points-1):
-        A[i, i-1] = 1
-        A[i, i] = -2
-        A[i, i+1] = 1
-        
-        # For a general 2nd order ODE: y'' = f(x, y, y')
-        # We use a central difference for y': (y(x+h) - y(x-h))/(2h)
-        # This is a simplification and may need iteration for accuracy
-        b[i] = h**2 * rhs_func(x[i], 0, 0)  # Initial guess
-    
-    # Solve the linear system
-    y = np.linalg.solve(A, b)
-    
-    # Refine solution through iteration (for non-linear terms)
-    for _ in range(5):  # A few iterations for better accuracy
-        for i in range(1, n_points-1):
-            y_prime_approx = (y[i+1] - y[i-1]) / (2*h)
-            b[i] = h**2 * rhs_func(x[i], y[i], y_prime_approx)
-        
-        y = np.linalg.solve(A, b)
-    
-    return y, x
-
-def solve_shooting(ode_str, order, x_start, x_end, boundary_conditions, tol=1e-6, max_iter=50):
-    """Solve ODE using shooting method."""
-    if order != 2:
-        raise ValueError("Shooting method implementation currently supports only 2nd order ODEs")
-    
-    # Get boundary conditions
-    left_bc = next((bc for bc in boundary_conditions if bc['point'] == x_start), None)
-    right_bc = next((bc for bc in boundary_conditions if bc['point'] == x_end), None)
-    
-    if not (left_bc and right_bc):
-        raise ValueError("Boundary conditions must be specified at both endpoints")
-    
-    # Create ODE function
-    ode_func = parse_ode(ode_str, order)
-    
-    # Define the shooting method
-    def shoot(guess):
-        # Initial conditions
-        y0 = np.zeros(order)
-        y0[0] = left_bc['value']
-        y0[1] = guess  # guessed derivative
-        
-        # Solve initial value problem
-        sol = solve_ivp(
-            lambda t, y: ode_func(t, y), 
-            [x_start, x_end], 
-            y0, 
-            method='RK45', 
-            t_eval=np.linspace(x_start, x_end, 100),
-            rtol=1e-6
-        )
-        
-        return sol.y[0, -1] - right_bc['value']  # Error at right boundary
-    
-    # Use bisection method to find the correct initial derivative
-    # Initial guesses
-    guess_low = -100.0
-    guess_high = 100.0
-    
-    # Check if the solution is in the range
-    f_low = shoot(guess_low)
-    f_high = shoot(guess_high)
-    
-    if f_low * f_high > 0:
-        # Try wider range
-        guess_low = -1000.0
-        guess_high = 1000.0
-        f_low = shoot(guess_low)
-        f_high = shoot(guess_high)
-        
-        if f_low * f_high > 0:
-            raise ValueError("Could not bracket the solution. Try different initial guesses.")
-    
-    # Bisection loop
-    guess = (guess_low + guess_high) / 2
-    iter_count = 0
-    
-    while abs(f_high - f_low) > tol and iter_count < max_iter:
-        guess = (guess_low + guess_high) / 2
-        f_guess = shoot(guess)
-        
-        if f_guess == 0:
-            break
-        
-        if f_guess * f_low < 0:
-            guess_high = guess
-            f_high = f_guess
-        else:
-            guess_low = guess
-            f_low = f_guess
-        
-        iter_count += 1
-    
-    # Solve with the final guess
-    y0 = np.zeros(order)
-    y0[0] = left_bc['value']
-    y0[1] = guess
-    
-    sol = solve_ivp(
-        lambda t, y: ode_func(t, y), 
-        [x_start, x_end], 
-        y0, 
-        method='RK45', 
-        t_eval=np.linspace(x_start, x_end, 100),
-        rtol=1e-6
-    )
-    
-    return sol.y[0], sol.t
 
 
 @app.route('/documentation')
 def documentation():
     return render_template('documentation.html',css="documentaton")
+
+
 
 
 if __name__ == '__main__':
